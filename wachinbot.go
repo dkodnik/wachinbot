@@ -1,8 +1,8 @@
 package main
 
 import (
-	"./matches"
 	"fmt"
+	"github.com/sschepens/wachinbot/matches"
 	"log"
 	"os"
 	"strings"
