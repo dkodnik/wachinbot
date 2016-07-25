@@ -13,6 +13,11 @@ import (
 
 var bot *telebot.Bot
 
+type InlineCallbackData struct {
+	Command   string `json:"command"`
+	Arguments string `json:"arguments"`
+}
+
 func main() {
 	var err error
 	bot, err = telebot.NewBot(os.Args[1])
@@ -22,9 +27,11 @@ func main() {
 
 	bot.Messages = make(chan telebot.Message, 1000)
 	bot.Queries = make(chan telebot.Query, 1000)
+	bot.Callbacks = make(chan telebot.Callback, 1000)
 
 	go messages()
 	go queries()
+	go callbacks()
 
 	bot.Start(1 * time.Second)
 }
@@ -52,7 +59,16 @@ func messages() {
 						bot.SendMessage(message.Chat, fmt.Sprintf("Error creating match: %s", err.Error()), &telebot.SendOptions{ReplyTo: message})
 						continue
 					}
-					bot.SendMessage(message.Chat, fmt.Sprintf("Match created on Date %s and Time %s", arguments[1], arguments[2]), &telebot.SendOptions{ReplyTo: message})
+					//bot.SendMessage(message.Chat, fmt.Sprintf("Match created on Date %s and Time %s", arguments[1], arguments[2]), &telebot.SendOptions{ReplyTo: message, ReplyMarkup: telebot.ReplyMarkup{CustomKeyboard: [][]string{[]string{"/in", "/out", "/maybe"}}, ResizeKeyboard: true, OneTimeKeyboard: true, InlineKeyboard: [][]telebot.KeyboardButton{[]telebot.KeyboardButton{telebot.KeyboardButton{Text: "In", URL: "http://localhost:8080", Data: ""}}}}})
+					bot.SendMessage(message.Chat, fmt.Sprintf("Match created on Date %s and Time %s", arguments[1], arguments[2]), &telebot.SendOptions{ReplyTo: message, ReplyMarkup: telebot.ReplyMarkup{
+						InlineKeyboard: [][]telebot.KeyboardButton{
+							[]telebot.KeyboardButton{
+								telebot.KeyboardButton{Text: "In", Data: "/in"},
+								telebot.KeyboardButton{Text: "Maybe", Data: "/maybe"},
+								telebot.KeyboardButton{Text: "Out", Data: "/out"},
+							},
+						},
+					}})
 				}
 			case "/status":
 				var match = matches.GetMatch(message.Chat.ID)
@@ -122,6 +138,18 @@ func queries() {
 
 		// And finally send the response.
 		if err := bot.AnswerInlineQuery(&query, &response); err != nil {
+			log.Println("Failed to respond to query:", err)
+		}
+	}
+}
+
+func callbacks() {
+	for callback := range bot.Callbacks {
+		var match = matches.GetMatch(callback.Message.Chat.ID)
+		if match != nil {
+			match.UpdateAttendee(callback.Sender, callback.Data, "")
+		}
+		if err := bot.AnswerInlineCallback(&callback, &telebot.CallbackResponse{}); err != nil {
 			log.Println("Failed to respond to query:", err)
 		}
 	}
