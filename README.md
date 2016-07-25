@@ -1,4 +1,9 @@
 # wachinbot
 Wachin Telegram Bot
 
-go run main.go SECRET_KEY
+Install:
+```
+go get -u github.com/sschepens/wachinbot
+
+wachinbot $SECRET_KEY
+```
