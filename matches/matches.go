@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sschepens/telebot"
+	"github.com/go-telegram-bot-api/telegram-bot-api"
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/sqlite"
 )
@@ -22,31 +22,38 @@ func init() {
 
 	db.AutoMigrate(&Match{})
 	db.AutoMigrate(&Attendee{})
+	db.AutoMigrate(&MatchMessage{})
 }
 
 type Match struct {
-	ID        uint64 `gorm:"primary_key"`
-	UserID int64
-	Day            string
-	Month          string
-	Year           string
-	Hour           string
-	Minutes        string
+	ID      uint64 `gorm:"primary_key"`
+	UserID  int64
+	Day     string
+	Month   string
+	Year    string
+	Hour    string
+	Minutes string
 }
 
 type Attendee struct {
 	ID        uint64 `gorm:"primary_key"`
-	UserID         int64
-	MatchID        uint64
-	FirstName      string
-	LastName       string
-	Username       string
-	Status string
+	UserID    int64
+	MatchID   uint64
+	FirstName string
+	LastName  string
+	Username  string
+	Status    string
+}
+
+type MatchMessage struct {
+	ID              uint64 `gorm:"primary_key"`
+	MatchID         uint64
+	InlineMessageID string
 }
 
 type MatchStatus struct {
-	In []string
-	Out []string
+	In    []string
+	Out   []string
 	Maybe []string
 }
 
@@ -77,7 +84,7 @@ func (m *Match) Maybe() ([]Attendee, error) {
 	return attendees, nil
 }
 
-func (m *Match) UpdateAttendee(user telebot.User, cmd string) error {
+func (m *Match) UpdateAttendee(user *tgbotapi.User, cmd string) error {
 	var attendee Attendee
 	status := cmd[1:]
 	err := db.First(&attendee, "user_id = ? AND match_id = ?", user.ID, m.ID)
@@ -90,8 +97,8 @@ func (m *Match) UpdateAttendee(user telebot.User, cmd string) error {
 	if notFound {
 		attendee.FirstName = user.FirstName
 		attendee.LastName = user.LastName
-		attendee.Username = user.Username
-		attendee.UserID = user.ID
+		attendee.Username = user.UserName
+		attendee.UserID = int64(user.ID)
 		attendee.MatchID = m.ID
 		err = db.Create(&attendee)
 	} else {
@@ -165,12 +172,12 @@ func NewMatch(userID int64, date, t string) (*Match, error) {
 	hour = timeSplit[0]
 	minutes = timeSplit[1]
 	m := Match{
-		Day:            day,
-		Month:          month,
-		Year:           year,
-		Hour:           hour,
-		Minutes:        minutes,
-		UserID: userID,
+		Day:     day,
+		Month:   month,
+		Year:    year,
+		Hour:    hour,
+		Minutes: minutes,
+		UserID:  userID,
 	}
 	err := db.Create(&m)
 	if err.Error != nil {
@@ -189,4 +196,25 @@ func GetMatches(userID int64) ([]Match, error) {
 	var matches []Match
 	err := db.Find(&matches, "user_id = ?", userID)
 	return matches, err.Error
+}
+
+func CreateMatchMessage(matchID uint64, msgID string) (*MatchMessage, error) {
+	matchMsg := MatchMessage{
+		MatchID:         matchID,
+		InlineMessageID: msgID,
+	}
+	err := db.Create(&matchMsg)
+	if err.Error != nil {
+		return nil, err.Error
+	}
+	return &matchMsg, nil
+}
+
+func GetMatchMessages(matchID uint64) ([]MatchMessage, error) {
+	var matchMsgs []MatchMessage
+	err := db.Find(&matchMsgs, "match_id = ?", matchID).Error
+	if err != nil {
+		return nil, err
+	}
+	return matchMsgs, nil
 }

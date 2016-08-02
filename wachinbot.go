@@ -1,21 +1,22 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
-	"github.com/sschepens/wachinbot/matches"
 	"log"
 	"os"
+	"strconv"
 	"strings"
-	"time"
-	"encoding/json"
 
-	"github.com/sschepens/telebot"
+	"github.com/sschepens/wachinbot/matches"
+
+	"github.com/go-telegram-bot-api/telegram-bot-api"
 )
 
-var bot *telebot.Bot
+var bot2 *tgbotapi.BotAPI
 
 type InlineCallbackData struct {
-	Command   string `json:"c"`
+	Command string `json:"c"`
 	MatchID uint64 `json:"m"`
 }
 
@@ -27,80 +28,101 @@ func stringCallbackData(cmd string, matchID uint64) string {
 
 func main() {
 	var err error
-	bot, err = telebot.NewBot(os.Args[1])
+	bot2, err = tgbotapi.NewBotAPI(os.Args[1])
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	bot.Messages = make(chan telebot.Message, 1000)
-	bot.Queries = make(chan telebot.Query, 1000)
-	bot.Callbacks = make(chan telebot.Callback, 1000)
+	updateConfig := tgbotapi.NewUpdate(0)
+	updateConfig.Timeout = 60
 
-	go messages()
-	go queries()
-	go callbacks()
+	updates, err := bot2.GetUpdatesChan(updateConfig)
 
-	bot.Start(1 * time.Second)
-}
-
-func messages() {
-	for message := range bot.Messages {
-		log.Printf("Received a message from %s with the text: %s\n", message.Sender.Username, message.Text)
-		if strings.HasPrefix(message.Text, "/") {
-			arguments := strings.Split(message.Text, " ")
-			command := arguments[0]
-			if strings.Contains(message.Text, "@") {
-				commandSplit := strings.Split(command, "@")
-				if commandSplit[1] != "wachinbot" {
-					continue
-				}
-				command = commandSplit[0]
-			}
-			switch command {
-			case "/start":
-				help(bot, message)
-			case "/help":
-				help(bot, message)
-			case "/match":
-				if len(arguments) < 3 {
-					bot.SendMessage(message.Chat, "Please specify a Date and a Time", &telebot.SendOptions{ReplyTo: message})
-				} else {
-					match, err := matches.NewMatch(message.Origin().ID, arguments[1], arguments[2])
-					if err != nil {
-						bot.SendMessage(message.Chat, fmt.Sprintf("Error creating match: %s", err.Error()), &telebot.SendOptions{ReplyTo: message})
-						continue
-					}
-					status, err := match.Status()
-					if err != nil {
-						log.Println("Failed to get match status:", err)
-					}
-					_, err = bot.SendMessage(message.Chat, status, &telebot.SendOptions{ReplyMarkup: telebot.ReplyMarkup{
-						InlineKeyboard: [][]telebot.KeyboardButton{
-							[]telebot.KeyboardButton{
-								telebot.KeyboardButton{Text: "In", Data: stringCallbackData("/in", match.ID)},
-								telebot.KeyboardButton{Text: "Maybe", Data: stringCallbackData("/maybe", match.ID)},
-								telebot.KeyboardButton{Text: "Out", Data: stringCallbackData("/out", match.ID)},
-							},
-							[]telebot.KeyboardButton{
-								telebot.KeyboardButton{Text: "Refresh Status", Data: stringCallbackData("/refresh", match.ID)},
-							},
-						},
-					}})
-					if err != nil {
-						log.Println("Failed to reply:", err)
-					}
-				}
-			default:
-				bot.SendMessage(message.Chat, "Invalid command", &telebot.SendOptions{ReplyTo: message})
-			}
+	for update := range updates {
+		if update.Message != nil {
+			processMessage(update.Message)
+		} else if update.EditedMessage != nil {
+			processEditedMessage(update.EditedMessage)
+		} else if update.InlineQuery != nil {
+			processInlineQuery(update.InlineQuery)
+		} else if update.ChosenInlineResult != nil {
+			processChosenInlineResult(update.ChosenInlineResult)
+		} else if update.CallbackQuery != nil {
+			processCallbackQuery(update.CallbackQuery)
 		} else {
-			fmt.Printf("Received unsupportted message: %+v\n", message)
+			log.Printf("received unknown update: %+v", update)
 		}
 	}
 }
 
-func help(bot *telebot.Bot, message telebot.Message) {
-	bot.SendMessage(message.Chat,
+func generateMatchInlineKeyboard(match matches.Match) tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("In", stringCallbackData("/in", match.ID)),
+			tgbotapi.NewInlineKeyboardButtonData("Maybe", stringCallbackData("/maybe", match.ID)),
+			tgbotapi.NewInlineKeyboardButtonData("Out", stringCallbackData("/out", match.ID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Refresh", stringCallbackData("/refresh", match.ID)),
+			tgbotapi.NewInlineKeyboardButtonSwitch("Share", strconv.FormatUint(match.ID, 10)),
+		),
+	)
+}
+
+func processMessage(message *tgbotapi.Message) {
+	if message.IsCommand() {
+		command := message.Command()
+		arguments := strings.Split(message.CommandArguments(), " ")
+		switch command {
+		case "start":
+			help(message)
+		case "help":
+			help(message)
+		case "match":
+			if len(arguments) < 2 {
+				msg := tgbotapi.NewMessage(message.Chat.ID, "Please specify a Date and a Time")
+				msg.ReplyToMessageID = message.MessageID
+				bot2.Send(msg)
+			} else {
+				match, err := matches.NewMatch(int64(message.From.ID), arguments[0], arguments[1])
+				if err != nil {
+					msg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf("Error creating match: %s", err.Error()))
+					msg.ReplyToMessageID = message.MessageID
+					_, err = bot2.Send(msg)
+					if err != nil {
+						log.Println("Failed to reply to message: ", err)
+					}
+					return
+				}
+				status, err := match.Status()
+				if err != nil {
+					log.Println("Failed to get match status:", err)
+				}
+				msg := tgbotapi.NewMessage(message.Chat.ID, status)
+				msg.ReplyMarkup = generateMatchInlineKeyboard(*match)
+				_, err = bot2.Send(msg)
+				if err != nil {
+					log.Println("Failed to reply:", err)
+				}
+			}
+		default:
+			msg := tgbotapi.NewMessage(message.Chat.ID, "Invalid command")
+			msg.ReplyToMessageID = message.MessageID
+			_, err := bot2.Send(msg)
+			if err != nil {
+				log.Println("Failed to reply:", err)
+			}
+		}
+	} else {
+		fmt.Printf("Received unsupportted message: %+v\n", message)
+	}
+}
+
+func processEditedMessage(message *tgbotapi.Message) {
+}
+
+func help(message *tgbotapi.Message) {
+	msg := tgbotapi.NewMessage(message.Chat.ID,
 		`Hello! I'm Wachin your helper, my commands are:
 
 /match Date Time - Creates a new Match
@@ -109,118 +131,141 @@ func help(bot *telebot.Bot, message telebot.Message) {
 /out - Leave Match
 /maybe - Not sure
 
-Be careful, I may steal you wife or wallet...`,
-		&telebot.SendOptions{ReplyTo: message})
+Be careful, I may steal you wife or wallet...`)
+	msg.ReplyToMessageID = message.MessageID
+	bot2.Send(msg)
 }
 
-func queries() {
-	for query := range bot.Queries {
-		matchesResult, err := matches.GetMatches(query.From.ID)
+func processCallbackQuery(callback *tgbotapi.CallbackQuery) {
+	var data InlineCallbackData
+	response := tgbotapi.CallbackConfig{CallbackQueryID: callback.ID}
+	json.Unmarshal([]byte(callback.Data), &data)
+	match, err := matches.GetMatch(data.MatchID)
+	if err != nil {
+		log.Println("Failed to get match:", err)
+		bot2.AnswerCallbackQuery(tgbotapi.CallbackConfig{CallbackQueryID: callback.ID, Text: "Failed to find Match!"})
+		return
+	}
+
+	switch data.Command {
+	case "/in", "/maybe", "/out":
+		switch data.Command {
+		case "/in":
+			response.Text = "Campeon!"
+		case "/maybe":
+			response.Text = "Pollera!"
+		case "/out":
+			response.Text = "Cagon!"
+		}
+		err = match.UpdateAttendee(callback.From, data.Command)
 		if err != nil {
-			fmt.Println("Error getting matches: ", err)
-			continue
+			log.Println("Failed to get update attendee status:", err)
+			response.Text = "Failed to update attendance!"
 		}
+	case "/refresh":
+		response.Text = "Refreshed!"
+	}
 
-		var results []telebot.InlineQueryResult
+	status, err := match.Status()
+	if err != nil {
+		log.Println("Failed to get match status:", err)
+	}
 
-		for _, m := range matchesResult {
-			status, _ := m.Status()
-			article := &telebot.InlineQueryResultArticle{
-				Title: "Match " + m.Day + "/" + m.Month + " " +m.Hour + ":"+m.Minutes,
-				InputMessageContent: &telebot.InputTextMessageContent{
-					Text:  status,
-					DisablePreview: true,
-				},
-				ReplyMarkup: telebot.InlineKeyboardMarkup{
-					InlineKeyboard: [][]telebot.KeyboardButton{
-						[]telebot.KeyboardButton{
-							telebot.KeyboardButton{Text: "In", Data: stringCallbackData("/in", m.ID)},
-							telebot.KeyboardButton{Text: "Maybe", Data: stringCallbackData("/maybe", m.ID)},
-							telebot.KeyboardButton{Text: "Out", Data: stringCallbackData("/out", m.ID)},
-						},
-						[]telebot.KeyboardButton{
-							telebot.KeyboardButton{Text: "Refresh Status", Data: stringCallbackData("/refresh", m.ID)},
-						},
-					},
-				},
+	markup := generateMatchInlineKeyboard(*match)
+	editMsg := tgbotapi.NewEditMessageText(0, 0, status)
+	if callback.InlineMessageID != "" {
+		editMsg.InlineMessageID = callback.InlineMessageID
+	} else {
+		editMsg.ChatID = callback.Message.Chat.ID
+		editMsg.MessageID = callback.Message.MessageID
+	}
+	editMsg.ReplyMarkup = &markup
+	_, err = bot2.Send(editMsg)
+	if err != nil {
+		log.Println("Failed to edit message:", err)
+	}
+
+	matchMsgs, err := matches.GetMatchMessages(match.ID)
+	if err != nil {
+		log.Println("Failed to get match messages: ", err)
+	}
+
+	for _, mm := range matchMsgs {
+		fmt.Printf("Updating inline message: %s\n", mm.InlineMessageID)
+		if mm.InlineMessageID != editMsg.InlineMessageID {
+			mkp := generateMatchInlineKeyboard(*match)
+			eMsg := tgbotapi.NewEditMessageText(0, 0, status)
+			eMsg.ReplyMarkup = &mkp
+			eMsg.InlineMessageID = mm.InlineMessageID
+			_, err = bot2.Send(eMsg)
+			if err != nil {
+				log.Println("Failed to edit message:", err)
 			}
-			results = append(results, article)
 		}
+	}
 
-		// Build a response object to answer the query.
-		response := telebot.QueryResponse{
-			Results:    results,
-			IsPersonal: true,
-		}
-
-		// And finally send the response.
-		if err := bot.AnswerInlineQuery(&query, &response); err != nil {
-			log.Println("Failed to respond to query:", err)
-		}
+	_, err = bot2.AnswerCallbackQuery(response)
+	if err != nil {
+		log.Println("Failed to respond to query:", err)
 	}
 }
 
-func callbacks() {
-	for callback := range bot.Callbacks {
-		var data InlineCallbackData
-		var response *telebot.CallbackResponse
-		json.Unmarshal([]byte(callback.Data), &data)
-		match, err := matches.GetMatch(data.MatchID)
-		if err != nil {
-			log.Println("Failed to get match:", err)
-			bot.AnswerCallbackQuery(&callback, &telebot.CallbackResponse{Text: "Failed to find Match!"})
-			continue
-		}
-
-		switch data.Command {
-		case "/in", "/maybe", "/out":
-			switch data.Command {
-			case "/in":
-				response = &telebot.CallbackResponse{Text: "Campeon!"}
-			case "/maybe":
-				response = &telebot.CallbackResponse{Text: "Pollera!"}
-			case "/out":
-				response = &telebot.CallbackResponse{Text: "Cagon!"}
-			}
-			err = match.UpdateAttendee(callback.Sender, data.Command)
-			if err != nil {
-				log.Println("Failed to get update attendee status:", err)
-				response = &telebot.CallbackResponse{Text: "Failed to update attendance!"}
-			}
-		case "/refresh":
-			response = &telebot.CallbackResponse{Text: "Refreshed!"}
-		default:
-			response = &telebot.CallbackResponse{}
-		}
-
-		status, err := match.Status()
-		if err != nil {
-			log.Println("Failed to get match status:", err)
-		}
-		sendOptions := &telebot.SendOptions{ReplyMarkup: telebot.ReplyMarkup{
-			InlineKeyboard: [][]telebot.KeyboardButton{
-				[]telebot.KeyboardButton{
-					telebot.KeyboardButton{Text: "In", Data: stringCallbackData("/in", match.ID)},
-					telebot.KeyboardButton{Text: "Maybe", Data: stringCallbackData("/maybe", match.ID)},
-					telebot.KeyboardButton{Text: "Out", Data: stringCallbackData("/out", match.ID)},
-				},
-				[]telebot.KeyboardButton{
-					telebot.KeyboardButton{Text: "Refresh Status", Data: stringCallbackData("/refresh", match.ID)},
-				},
-			},
-		}}
-		if callback.MessageID != "" {
-			err = bot.EditInlineMessageText(callback.MessageID, status, sendOptions)
-		} else {
-			_, err = bot.EditMessageText(callback.Message, status, sendOptions)
-		}
-		if err != nil {
-			log.Println("Failed to reply callback:", err)
-		}
-
-		err = bot.AnswerCallbackQuery(&callback, response)
+func processInlineQuery(query *tgbotapi.InlineQuery) {
+	response := tgbotapi.InlineConfig{
+		InlineQueryID: query.ID,
+		IsPersonal:    true,
+		CacheTime:     0,
+	}
+	defer func() {
+		_, err := bot2.AnswerInlineQuery(response)
 		if err != nil {
 			log.Println("Failed to respond to query:", err)
 		}
+	}()
+
+	if len(strings.TrimSpace(query.Query)) == 0 {
+		matchesResult, err := matches.GetMatches(int64(query.From.ID))
+		if err != nil {
+			fmt.Println("Error getting matches: ", err)
+			return
+		}
+
+		for _, m := range matchesResult {
+			status, _ := m.Status()
+			article := tgbotapi.NewInlineQueryResultArticle(strconv.FormatUint(m.ID, 10), "Match "+m.Day+"/"+m.Month+" "+m.Hour+":"+m.Minutes, status)
+			markup := generateMatchInlineKeyboard(m)
+			article.ReplyMarkup = &markup
+			response.Results = append(response.Results, article)
+		}
+	} else {
+		id, err := strconv.ParseUint(strings.TrimSpace(query.Query), 10, 0)
+		if err != nil {
+			return
+		}
+		m, err := matches.GetMatch(id)
+		if err != nil {
+			fmt.Println("Error getting matches: ", err)
+			return
+		}
+
+		status, _ := m.Status()
+		article := tgbotapi.NewInlineQueryResultArticle(strconv.FormatUint(m.ID, 10), "Match "+m.Day+"/"+m.Month+" "+m.Hour+":"+m.Minutes, status)
+		markup := generateMatchInlineKeyboard(*m)
+		article.ReplyMarkup = &markup
+		response.Results = append(response.Results, article)
+	}
+}
+
+func processChosenInlineResult(result *tgbotapi.ChosenInlineResult) {
+	matchID, err := strconv.ParseUint(result.ResultID, 10, 0)
+	if err != nil {
+		fmt.Println("Error parsing match id: ", err)
+		return
+	}
+
+	_, err = matches.CreateMatchMessage(matchID, result.InlineMessageID)
+	if err != nil {
+		fmt.Println("Error creating MatchMessage: ", err)
+		return
 	}
 }
