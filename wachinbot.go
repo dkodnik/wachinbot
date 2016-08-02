@@ -55,7 +55,17 @@ func main() {
 	}
 }
 
-func generateMatchInlineKeyboard(match matches.Match) tgbotapi.InlineKeyboardMarkup {
+func generateMatchPublicInlineKeyboard(match matches.Match) tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("In", stringCallbackData("/in", match.ID)),
+			tgbotapi.NewInlineKeyboardButtonData("Maybe", stringCallbackData("/maybe", match.ID)),
+			tgbotapi.NewInlineKeyboardButtonData("Out", stringCallbackData("/out", match.ID)),
+		),
+	)
+}
+
+func generateMatchPrivateInlineKeyboard(match matches.Match) tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("In", stringCallbackData("/in", match.ID)),
@@ -99,7 +109,7 @@ func processMessage(message *tgbotapi.Message) {
 					log.Println("Failed to get match status:", err)
 				}
 				msg := tgbotapi.NewMessage(message.Chat.ID, status)
-				msg.ReplyMarkup = generateMatchInlineKeyboard(*match)
+				msg.ReplyMarkup = generateMatchPrivateInlineKeyboard(*match)
 				_, err = bot2.Send(msg)
 				if err != nil {
 					log.Println("Failed to reply:", err)
@@ -126,10 +136,6 @@ func help(message *tgbotapi.Message) {
 		`Hello! I'm Wachin your helper, my commands are:
 
 /match Date Time - Creates a new Match
-/status - Match status
-/in - Join Match
-/out - Leave Match
-/maybe - Not sure
 
 Be careful, I may steal you wife or wallet...`)
 	msg.ReplyToMessageID = message.MessageID
@@ -171,13 +177,15 @@ func processCallbackQuery(callback *tgbotapi.CallbackQuery) {
 		log.Println("Failed to get match status:", err)
 	}
 
-	markup := generateMatchInlineKeyboard(*match)
+  var markup tgbotapi.InlineKeyboardMarkup
 	editMsg := tgbotapi.NewEditMessageText(0, 0, status)
 	if callback.InlineMessageID != "" {
 		editMsg.InlineMessageID = callback.InlineMessageID
+		markup = generateMatchPublicInlineKeyboard(*match)
 	} else {
 		editMsg.ChatID = callback.Message.Chat.ID
 		editMsg.MessageID = callback.Message.MessageID
+		markup = generateMatchPrivateInlineKeyboard(*match)
 	}
 	editMsg.ReplyMarkup = &markup
 	_, err = bot2.Send(editMsg)
@@ -193,7 +201,7 @@ func processCallbackQuery(callback *tgbotapi.CallbackQuery) {
 	for _, mm := range matchMsgs {
 		fmt.Printf("Updating inline message: %s\n", mm.InlineMessageID)
 		if mm.InlineMessageID != editMsg.InlineMessageID {
-			mkp := generateMatchInlineKeyboard(*match)
+			mkp := generateMatchPublicInlineKeyboard(*match)
 			eMsg := tgbotapi.NewEditMessageText(0, 0, status)
 			eMsg.ReplyMarkup = &mkp
 			eMsg.InlineMessageID = mm.InlineMessageID
@@ -232,8 +240,8 @@ func processInlineQuery(query *tgbotapi.InlineQuery) {
 
 		for _, m := range matchesResult {
 			status, _ := m.Status()
-			article := tgbotapi.NewInlineQueryResultArticle(strconv.FormatUint(m.ID, 10), "Match "+m.Day+"/"+m.Month+" "+m.Hour+":"+m.Minutes, status)
-			markup := generateMatchInlineKeyboard(m)
+			article := tgbotapi.NewInlineQueryResultArticle(strconv.FormatUint(m.ID, 10), fmt.Sprintf("Match #%d on %s", m.ID, m.FormatTime()), status)
+			markup := generateMatchPublicInlineKeyboard(m)
 			article.ReplyMarkup = &markup
 			response.Results = append(response.Results, article)
 		}
@@ -249,8 +257,8 @@ func processInlineQuery(query *tgbotapi.InlineQuery) {
 		}
 
 		status, _ := m.Status()
-		article := tgbotapi.NewInlineQueryResultArticle(strconv.FormatUint(m.ID, 10), "Match "+m.Day+"/"+m.Month+" "+m.Hour+":"+m.Minutes, status)
-		markup := generateMatchInlineKeyboard(*m)
+		article := tgbotapi.NewInlineQueryResultArticle(strconv.FormatUint(m.ID, 10), fmt.Sprintf("Match #%d on %s", m.ID, m.FormatTime()), status)
+		markup := generateMatchPublicInlineKeyboard(*m)
 		article.ReplyMarkup = &markup
 		response.Results = append(response.Results, article)
 	}

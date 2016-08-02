@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"errors"
 
 	"github.com/go-telegram-bot-api/telegram-bot-api"
 	"github.com/jinzhu/gorm"
@@ -27,27 +28,24 @@ func init() {
 
 type Match struct {
 	ID      uint64 `gorm:"primary_key"`
-	UserID  int64
-	Day     string
-	Month   string
-	Year    string
-	Hour    string
-	Minutes string
+	UserID  int64  `gorm:"index"`
+	Attendees []Attendee
+	Time time.Time
 }
 
 type Attendee struct {
 	ID        uint64 `gorm:"primary_key"`
-	UserID    int64
-	MatchID   uint64
+	UserID    int64  `gorm:"index"`
+	MatchID   uint64 `gorm:"index:idx_match_id_status"`
 	FirstName string
 	LastName  string
 	Username  string
-	Status    string
+	Status    string `gorm:"index:idx_match_id_status"`
 }
 
 type MatchMessage struct {
 	ID              uint64 `gorm:"primary_key"`
-	MatchID         uint64
+	MatchID         uint64 `gorm:"index"`
 	InlineMessageID string
 }
 
@@ -59,27 +57,30 @@ type MatchStatus struct {
 
 func (m *Match) In() ([]Attendee, error) {
 	var attendees []Attendee
-	err := db.Find(&attendees, "match_id = ? AND status = ?", m.ID, "in").Error
-	if err != nil {
-		return nil, err
+	for _, a := range m.Attendees {
+		if a.Status == "maybe" {
+			attendees = append(attendees, a)
+		}
 	}
 	return attendees, nil
 }
 
 func (m *Match) Out() ([]Attendee, error) {
 	var attendees []Attendee
-	err := db.Find(&attendees, "match_id = ? AND status = ?", m.ID, "out").Error
-	if err != nil {
-		return nil, err
+	for _, a := range m.Attendees {
+		if a.Status == "out" {
+			attendees = append(attendees, a)
+		}
 	}
 	return attendees, nil
 }
 
 func (m *Match) Maybe() ([]Attendee, error) {
 	var attendees []Attendee
-	err := db.Find(&attendees, "match_id = ? AND status = ?", m.ID, "maybe").Error
-	if err != nil {
-		return nil, err
+	for _, a := range m.Attendees {
+		if a.Status == "maybe" {
+			attendees = append(attendees, a)
+		}
 	}
 	return attendees, nil
 }
@@ -111,6 +112,10 @@ func (m *Match) UpdateAttendee(user *tgbotapi.User, cmd string) error {
 	return nil
 }
 
+func (m *Match) FormatTime() string {
+	return m.Time.Format("Mon, 02 Jan 15:04")
+}
+
 func (m *Match) Status() (msg string, err error) {
 	var attendees []Attendee
 	var matchStatus MatchStatus
@@ -129,7 +134,7 @@ func (m *Match) Status() (msg string, err error) {
 			matchStatus.Maybe = append(matchStatus.Maybe, name)
 		}
 	}
-	msg = fmt.Sprintf("There's a Match scheduled for %s/%s/%s %s:%s:\n", m.Day, m.Month, m.Year, m.Hour, m.Minutes)
+	msg = fmt.Sprintf("Match #%d on %s:\n", m.ID, m.FormatTime())
 	if len(matchStatus.In) > 0 {
 		msg += "Attendees:"
 		for _, v := range matchStatus.In {
@@ -155,29 +160,29 @@ func (m *Match) Status() (msg string, err error) {
 }
 
 func NewMatch(userID int64, date, t string) (*Match, error) {
-	var day, month, year, hour, minutes string
+	var day, month, year, hour, minutes int
 	dateSplit := strings.Split(date, "/")
 	if len(dateSplit) < 2 {
 		return nil, fmt.Errorf("Date is invalid: %s", date)
 	}
 	if len(dateSplit) == 2 {
-		year = strconv.Itoa(time.Now().Year())
-		day = dateSplit[0]
-		month = dateSplit[1]
+		year = time.Now().Year()
+		day, _ = strconv.Atoi(dateSplit[0])
+		month, _ = strconv.Atoi(dateSplit[1])
 	}
 	timeSplit := strings.Split(t, ":")
 	if len(timeSplit) < 2 {
 		return nil, fmt.Errorf("Time is invalid: %s", t)
 	}
-	hour = timeSplit[0]
-	minutes = timeSplit[1]
+	hour, _ = strconv.Atoi(timeSplit[0])
+	minutes, _ = strconv.Atoi(timeSplit[1])
+	dateTime := time.Date(year, time.Month(month), day, hour, minutes, 0, 0, time.Local)
+	if dateTime.Before(time.Now()) {
+		return nil, errors.New("Time is before than now")
+	}
 	m := Match{
-		Day:     day,
-		Month:   month,
-		Year:    year,
-		Hour:    hour,
-		Minutes: minutes,
 		UserID:  userID,
+		Time: dateTime,
 	}
 	err := db.Create(&m)
 	if err.Error != nil {
@@ -188,13 +193,13 @@ func NewMatch(userID int64, date, t string) (*Match, error) {
 
 func GetMatch(id uint64) (*Match, error) {
 	var match Match
-	err := db.Find(&match, id)
+	err := db.Preload("Attendees").Find(&match, id)
 	return &match, err.Error
 }
 
 func GetMatches(userID int64) ([]Match, error) {
 	var matches []Match
-	err := db.Find(&matches, "user_id = ?", userID)
+	err := db.Preload("Attendees").Find(&matches, "user_id = ? AND time > ?", userID, time.Now())
 	return matches, err.Error
 }
 
