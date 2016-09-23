@@ -1,11 +1,11 @@
 package matches
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
-	"errors"
 
 	"github.com/go-telegram-bot-api/telegram-bot-api"
 	"github.com/jinzhu/gorm"
@@ -24,13 +24,14 @@ func init() {
 	db.AutoMigrate(&Match{})
 	db.AutoMigrate(&Attendee{})
 	db.AutoMigrate(&MatchMessage{})
+	db.LogMode(true)
 }
 
 type Match struct {
-	ID      uint64 `gorm:"primary_key"`
-	UserID  int64  `gorm:"index"`
+	ID        uint64 `gorm:"primary_key"`
+	UserID    int64  `gorm:"index"`
 	Attendees []Attendee
-	Time time.Time
+	Time      time.Time
 }
 
 type Attendee struct {
@@ -181,8 +182,8 @@ func NewMatch(userID int64, date, t string) (*Match, error) {
 		return nil, errors.New("Time is before than now")
 	}
 	m := Match{
-		UserID:  userID,
-		Time: dateTime,
+		UserID: userID,
+		Time:   dateTime,
 	}
 	err := db.Create(&m)
 	if err.Error != nil {
@@ -199,7 +200,7 @@ func GetMatch(id uint64) (*Match, error) {
 
 func GetMatches(userID int64) ([]Match, error) {
 	var matches []Match
-	err := db.Preload("Attendees").Find(&matches, "user_id = ? AND time > ?", userID, time.Now())
+	err := db.Preload("Attendees").Joins("JOIN attendees on attendees.match_id = matches.id").Find(&matches, "matches.user_id = ? OR attendees.user_id = ? AND matches.time > ?", userID, userID, time.Now())
 	return matches, err.Error
 }
 
