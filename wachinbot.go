@@ -82,12 +82,50 @@ func generateMatchPrivateInlineKeyboard(match matches.Match) tgbotapi.InlineKeyb
 func processMessage(message *tgbotapi.Message) {
 	if message.IsCommand() {
 		command := message.Command()
-		arguments := strings.Split(message.CommandArguments(), " ")
+		arguments := strings.Split(strings.TrimSpace(message.CommandArguments()), " ")
 		switch command {
 		case "start":
 			help(message)
 		case "help":
 			help(message)
+		case "add", "remove":
+			argLen := len(arguments)
+			if argLen < 1 {
+				msg := tgbotapi.NewMessage(message.Chat.ID, "Please specify a Match and a Player")
+				msg.ReplyToMessageID = message.MessageID
+				bot2.Send(msg)
+			} else if argLen < 2 {
+				msg := tgbotapi.NewMessage(message.Chat.ID, "Please specify a Player")
+				msg.ReplyToMessageID = message.MessageID
+				bot2.Send(msg)
+			} else {
+				id, err := strconv.ParseUint(arguments[0], 10, 0)
+				if err != nil {
+					msg := tgbotapi.NewMessage(message.Chat.ID, "Invalid Match number")
+					msg.ReplyToMessageID = message.MessageID
+					bot2.Send(msg)
+				} else {
+					m, err := matches.GetMatch(id)
+					if err != nil {
+						msg := tgbotapi.NewMessage(message.Chat.ID, "Match not found")
+						msg.ReplyToMessageID = message.MessageID
+						bot2.Send(msg)
+					} else {
+						if command == "add" {
+							err = m.AddExternalAttendee(strings.Join(arguments[1:], " "))
+						} else {
+							err = m.RemoveExternalAttendee(strings.Join(arguments[1:], " "))
+						}
+						if err != nil {
+							msg := tgbotapi.NewMessage(message.Chat.ID, "Error: "+err.Error())
+							msg.ReplyToMessageID = message.MessageID
+							bot2.Send(msg)
+						} else {
+							updateInlineMatchMessages(m, "")
+						}
+					}
+				}
+			}
 		case "match":
 			if len(arguments) < 2 {
 				msg := tgbotapi.NewMessage(message.Chat.ID, "Please specify a Date and a Time")
@@ -177,7 +215,7 @@ func processCallbackQuery(callback *tgbotapi.CallbackQuery) {
 		log.Println("Failed to get match status:", err)
 	}
 
-  var markup tgbotapi.InlineKeyboardMarkup
+	var markup tgbotapi.InlineKeyboardMarkup
 	editMsg := tgbotapi.NewEditMessageText(0, 0, status)
 	if callback.InlineMessageID != "" {
 		editMsg.InlineMessageID = callback.InlineMessageID
@@ -218,6 +256,61 @@ func processCallbackQuery(callback *tgbotapi.CallbackQuery) {
 	}
 }
 
+func updateChatMatchMessage(match *matches.Match, chatID int64, messageID int) {
+	var markup tgbotapi.InlineKeyboardMarkup
+	status, err := match.Status()
+	if err != nil {
+		log.Println("Failed to get match status:", err)
+	}
+	editMsg := tgbotapi.NewEditMessageText(0, 0, status)
+	editMsg.ChatID = chatID
+	editMsg.MessageID = messageID
+	markup = generateMatchPrivateInlineKeyboard(*match)
+	editMsg.ReplyMarkup = &markup
+	_, err = bot2.Send(editMsg)
+	if err != nil {
+		log.Println("Failed to edit message:", err)
+	}
+}
+
+func updateInlineMatchMessages(match *matches.Match, inlineMessageID string) {
+	status, err := match.Status()
+	if err != nil {
+		log.Println("Failed to get match status:", err)
+	}
+
+	var markup tgbotapi.InlineKeyboardMarkup
+	if inlineMessageID != "" {
+		editMsg := tgbotapi.NewEditMessageText(0, 0, status)
+		editMsg.InlineMessageID = inlineMessageID
+		markup = generateMatchPublicInlineKeyboard(*match)
+		editMsg.ReplyMarkup = &markup
+		_, err = bot2.Send(editMsg)
+		if err != nil {
+			log.Println("Failed to edit message:", err)
+		}
+	}
+
+	matchMsgs, err := matches.GetMatchMessages(match.ID)
+	if err != nil {
+		log.Println("Failed to get match messages: ", err)
+	}
+
+	for _, mm := range matchMsgs {
+		fmt.Printf("Updating inline message: %s\n", mm.InlineMessageID)
+		if mm.InlineMessageID != inlineMessageID {
+			mkp := generateMatchPublicInlineKeyboard(*match)
+			eMsg := tgbotapi.NewEditMessageText(0, 0, status)
+			eMsg.ReplyMarkup = &mkp
+			eMsg.InlineMessageID = mm.InlineMessageID
+			_, err = bot2.Send(eMsg)
+			if err != nil {
+				log.Println("Failed to edit message:", err)
+			}
+		}
+	}
+}
+
 func processInlineQuery(query *tgbotapi.InlineQuery) {
 	response := tgbotapi.InlineConfig{
 		InlineQueryID: query.ID,
@@ -232,6 +325,7 @@ func processInlineQuery(query *tgbotapi.InlineQuery) {
 	}()
 
 	if len(strings.TrimSpace(query.Query)) == 0 {
+		fmt.Println("list all matches")
 		matchesResult, err := matches.GetMatches(int64(query.From.ID))
 		if err != nil {
 			fmt.Println("Error getting matches: ", err)
@@ -239,6 +333,7 @@ func processInlineQuery(query *tgbotapi.InlineQuery) {
 		}
 
 		for _, m := range matchesResult {
+			fmt.Printf("match: %d", m.ID)
 			status, _ := m.Status()
 			article := tgbotapi.NewInlineQueryResultArticle(strconv.FormatUint(m.ID, 10), fmt.Sprintf("Match #%d on %s", m.ID, m.FormatTime()), status)
 			markup := generateMatchPublicInlineKeyboard(m)
@@ -246,7 +341,9 @@ func processInlineQuery(query *tgbotapi.InlineQuery) {
 			response.Results = append(response.Results, article)
 		}
 	} else {
-		id, err := strconv.ParseUint(strings.TrimSpace(query.Query), 10, 0)
+		fmt.Printf("find matches '%s'", query.Query)
+		querySplit := strings.Split(strings.TrimSpace(query.Query), " ")
+		id, err := strconv.ParseUint(querySplit[0], 10, 0)
 		if err != nil {
 			return
 		}
@@ -261,10 +358,19 @@ func processInlineQuery(query *tgbotapi.InlineQuery) {
 		markup := generateMatchPublicInlineKeyboard(*m)
 		article.ReplyMarkup = &markup
 		response.Results = append(response.Results, article)
+
+		article = tgbotapi.NewInlineQueryResultArticle("add", fmt.Sprintf("Add player '%s' to Match #%d", strings.Join(querySplit[1:], " "), id), fmt.Sprintf("/add@wachinbot %d %s", id, strings.Join(querySplit[1:], " ")))
+		response.Results = append(response.Results, article)
+
+		article = tgbotapi.NewInlineQueryResultArticle("remove", fmt.Sprintf("Remove player '%s' from Match #%d", strings.Join(querySplit[1:], " "), id), fmt.Sprintf("/remove@wachinbot %d %s", id, strings.Join(querySplit[1:], " ")))
+		response.Results = append(response.Results, article)
 	}
 }
 
 func processChosenInlineResult(result *tgbotapi.ChosenInlineResult) {
+	if result.ResultID == "add" || result.ResultID == "remove" {
+		return
+	}
 	matchID, err := strconv.ParseUint(result.ResultID, 10, 0)
 	if err != nil {
 		fmt.Println("Error parsing match id: ", err)
