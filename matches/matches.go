@@ -146,7 +146,7 @@ func (m *Match) RemoveExternalAttendee(p string) error {
 	}
 	player := strings.Title(strings.ToLower(p))
 	var attendee Attendee
-	err := db.First(&attendee, "first_name = ? AND last_name = ? AND match_id = ?", player, m.ID)
+	err := db.First(&attendee, "first_name = ? AND last_name = ? AND match_id = ?", player, "", m.ID)
 	if err.Error != nil {
 		if err.RecordNotFound() {
 			return errors.New("player not found")
