@@ -353,16 +353,21 @@ func processInlineQuery(query *tgbotapi.InlineQuery) {
 			return
 		}
 
-		status, _ := m.Status()
-		article := tgbotapi.NewInlineQueryResultArticle(strconv.FormatUint(m.ID, 10), fmt.Sprintf("Match #%d on %s", m.ID, m.FormatTime()), status)
-		markup := generateMatchPublicInlineKeyboard(*m)
-		article.ReplyMarkup = &markup
+		player := strings.TrimSpace(strings.Join(querySplit[1:], " "))
+
+		var article tgbotapi.InlineQueryResultArticle
+		if len(player) == 0 {
+			status, _ := m.Status()
+			article = tgbotapi.NewInlineQueryResultArticle(strconv.FormatUint(m.ID, 10), fmt.Sprintf("Match #%d on %s", m.ID, m.FormatTime()), status)
+			markup := generateMatchPublicInlineKeyboard(*m)
+			article.ReplyMarkup = &markup
+			response.Results = append(response.Results, article)
+		}
+
+		article = tgbotapi.NewInlineQueryResultArticle("add", fmt.Sprintf("Add player %s to Match #%d", player, id), fmt.Sprintf("/add@wachinbot %d %s", id, player))
 		response.Results = append(response.Results, article)
 
-		article = tgbotapi.NewInlineQueryResultArticle("add", fmt.Sprintf("Add player '%s' to Match #%d", strings.Join(querySplit[1:], " "), id), fmt.Sprintf("/add@wachinbot %d %s", id, strings.Join(querySplit[1:], " ")))
-		response.Results = append(response.Results, article)
-
-		article = tgbotapi.NewInlineQueryResultArticle("remove", fmt.Sprintf("Remove player '%s' from Match #%d", strings.Join(querySplit[1:], " "), id), fmt.Sprintf("/remove@wachinbot %d %s", id, strings.Join(querySplit[1:], " ")))
+		article = tgbotapi.NewInlineQueryResultArticle("remove", fmt.Sprintf("Remove player %s from Match #%d", player, id), fmt.Sprintf("/remove@wachinbot %d %s", id, player))
 		response.Results = append(response.Results, article)
 	}
 }
