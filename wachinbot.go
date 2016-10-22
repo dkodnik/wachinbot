@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha512"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -364,12 +366,20 @@ func processInlineQuery(query *tgbotapi.InlineQuery) {
 			response.Results = append(response.Results, article)
 		}
 
+		hasher := sha512.New()
+
 		add := fmt.Sprintf("Add player '%s' to Match #%d", player, id)
-		article = tgbotapi.NewInlineQueryResultArticle(add, add, fmt.Sprintf("/add@wachinbot %d %s", id, player))
+		hasher.Write([]byte(add))
+		addID := base64.URLEncoding.EncodeToString(hasher.Sum(nil))
+		hasher.Reset()
+		article = tgbotapi.NewInlineQueryResultArticle(addID, add, fmt.Sprintf("/add@wachinbot %d %s", id, player))
 		response.Results = append(response.Results, article)
 
 		remove := fmt.Sprintf("Remove player '%s' from Match #%d", player, id)
-		article = tgbotapi.NewInlineQueryResultArticle(remove, remove, fmt.Sprintf("/remove@wachinbot %d %s", id, player))
+		hasher.Write([]byte(remove))
+		removeID := base64.URLEncoding.EncodeToString(hasher.Sum(nil))
+		hasher.Reset()
+		article = tgbotapi.NewInlineQueryResultArticle(removeID, remove, fmt.Sprintf("/remove@wachinbot %d %s", id, player))
 		response.Results = append(response.Results, article)
 	}
 }
