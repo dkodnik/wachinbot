@@ -1,7 +1,7 @@
 package main
 
 import (
-	"crypto/sha512"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -366,7 +366,7 @@ func processInlineQuery(query *tgbotapi.InlineQuery) {
 			response.Results = append(response.Results, article)
 		}
 
-		hasher := sha512.New()
+		hasher := sha256.New()
 
 		add := fmt.Sprintf("Add player '%s' to Match #%d", player, id)
 		hasher.Write([]byte(add))
