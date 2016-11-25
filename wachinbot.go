@@ -107,7 +107,7 @@ func processMessage(message *tgbotapi.Message) {
 					msg.ReplyToMessageID = message.MessageID
 					bot2.Send(msg)
 				} else {
-					m, err := matches.GetMatch(int64(message.From.ID), id)
+					m, err := matches.GetMatchByUser(int64(message.From.ID), id)
 					if err != nil {
 						msg := tgbotapi.NewMessage(message.Chat.ID, "Match not found")
 						msg.ReplyToMessageID = message.MessageID
@@ -186,7 +186,7 @@ func processCallbackQuery(callback *tgbotapi.CallbackQuery) {
 	var data InlineCallbackData
 	response := tgbotapi.CallbackConfig{CallbackQueryID: callback.ID}
 	json.Unmarshal([]byte(callback.Data), &data)
-	match, err := matches.GetMatch(int64(callback.From.ID), data.MatchID)
+	match, err := matches.GetMatch(data.MatchID)
 	if err != nil {
 		log.Println("Failed to get match:", err)
 		bot2.AnswerCallbackQuery(tgbotapi.CallbackConfig{CallbackQueryID: callback.ID, Text: "Failed to find Match!"})
@@ -349,7 +349,7 @@ func processInlineQuery(query *tgbotapi.InlineQuery) {
 		if err != nil {
 			return
 		}
-		m, err := matches.GetMatch(int64(query.From.ID), id)
+		m, err := matches.GetMatchByUser(int64(query.From.ID), id)
 		if err != nil {
 			fmt.Println("Error getting matches: ", err)
 			return

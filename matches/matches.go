@@ -245,9 +245,15 @@ func NewMatch(userID int64, date, t string) (*Match, error) {
 	return &m, nil
 }
 
-func GetMatch(userID int64, id uint64) (*Match, error) {
+func GetMatchByUser(userID int64, id uint64) (*Match, error) {
 	var match Match
 	err := db.Preload("Attendees").Joins("LEFT OUTER JOIN attendees on attendees.match_id = matches.id").Select("DISTINCT matches.*").Where("(matches.user_id = ? OR attendees.user_id = ?) AND matches.time > ?", userID, userID, time.Now()).First(&match, id)
+	return &match, err.Error
+}
+
+func GetMatch(id uint64) (*Match, error) {
+	var match Match
+	err := db.Preload("Attendees").First(&match, id)
 	return &match, err.Error
 }
 
