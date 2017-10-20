@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -35,10 +36,13 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	updateConfig := tgbotapi.NewUpdate(0)
-	updateConfig.Timeout = 60
+	_, err = bot2.SetWebhook(tgbotapi.NewWebhookWithCert("https://"+os.Args[2]+":8443/"+bot2.Token, "cert.pem"))
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	updates, err := bot2.GetUpdatesChan(updateConfig)
+	updates := bot2.ListenForWebhook("/" + bot2.Token)
+	go http.ListenAndServeTLS("0.0.0.0:8443", "cert.pem", "key.pem", nil)
 
 	for update := range updates {
 		if update.Message != nil {
